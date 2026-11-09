@@ -1,0 +1,1378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+</head>
+<body>
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Aims EA</title>
+<style>
+  /* Layout: top stat strip -> account roster cards (wrap) -> editable day-by-day P&L matrix (dates as rows, accounts as columns, sticky header + sticky date column) */
+  :root{
+    color-scheme: dark;
+    --bg:#0a0e14;
+    --surface:#121825;
+    --surface-2:#1a2232;
+    --border-c:#2a3547;
+    --fg:#e7ecf5;
+    --fg-muted:#8893a8;
+    --fg-faint:#56607a;
+    --accent:#2dd4cf;
+    --positive:#3ed98b;
+    --negative:#ff6b6a;
+    --amber:#f5a623;
+    --lotblue:#6cc3f5;
+    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg);
+    color:var(--fg);
+    font-family:var(--sans);
+    margin:0;
+    padding-left:max(16px, env(safe-area-inset-left,0px));
+    padding-right:max(16px, env(safe-area-inset-right,0px));
+    padding-bottom:40px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{text-wrap:balance;margin:0}
+  .wrap{max-width:1180px;margin:0 auto}
+
+  .page-header{padding-top:28px;padding-bottom:18px;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--border-c);margin-bottom:22px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+  .page-header h1{font-size:26px;font-weight:700;letter-spacing:-.01em}
+  .page-header .sub{color:var(--fg-muted);font-size:13px;margin-top:4px}
+  .today-badge{font-family:var(--mono);font-size:13px;color:var(--fg-muted);background:var(--surface);border:1px solid var(--border-c);border-radius:8px;padding:7px 12px;white-space:nowrap}
+  .today-badge b{color:var(--fg)}
+
+  /* 2026-11-02新增：月份切换器——Daily P&L Tracker所有汇总数字（顶部统计条/账户卡片/
+     详情弹窗）默认只看"选中的那个月"，不再是从账号开始日一路累加的all-time cumulative。
+     默认选中当前自然月，用这里的 ◀ ▶ 往回翻看历史月份（相当于把每个月存档，可以单独看），
+     不能往未来翻（当前月时 ▶ 会被disable）。主页头部和详情弹窗各有一份，但共用同一个
+     selectedMonth状态，两边点哪个都会同步。 */
+  .month-switch{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;color:var(--fg-muted);background:var(--surface);border:1px solid var(--border-c);border-radius:8px;padding:5px 8px}
+  .month-switch .month-switch-label{min-width:88px;text-align:center;color:var(--fg);font-weight:600}
+  .month-switch.is-archive .month-switch-label{color:var(--amber)}
+  .month-arrow{background:transparent;border:1px solid var(--border-c);border-radius:6px;padding:3px 8px;font-size:13px;line-height:1;color:var(--fg-muted);cursor:pointer}
+  .month-arrow:hover{border-color:var(--accent);color:var(--accent)}
+  .month-arrow:disabled{opacity:.35;cursor:not-allowed}
+  .month-arrow:disabled:hover{border-color:var(--border-c);color:var(--fg-muted)}
+  .month-jump{background:transparent;border:1px solid var(--accent);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--accent);cursor:pointer;margin-left:2px}
+  .month-jump:hover{background:var(--accent);color:#06201e}
+
+  /* Account-column pager for the Daily P&L Log matrix: with many accounts the
+     table gets too wide to read comfortably, so columns are grouped into
+     pages of ACCOUNTS_PER_PAGE and this strip (Prev · 1 2 3 … · Next) sits
+     just above the table to switch which accounts' columns are shown.
+     The Date column and the Daily Total / Grand Total figures always use the
+     FULL account list regardless of which page is selected — only the
+     per-account columns in between are paginated. */
+  .acct-pager{display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:12.5px;margin-bottom:10px;flex-wrap:wrap}
+  .acct-pager button{background:var(--surface);border:1px solid var(--border-c);border-radius:6px;padding:4px 9px;color:var(--fg-muted);cursor:pointer;min-width:30px;text-align:center}
+  .acct-pager button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  .acct-pager button:disabled{opacity:.35;cursor:not-allowed}
+  .acct-pager button.active{background:var(--accent);border-color:var(--accent);color:#06201e;font-weight:700}
+  .acct-pager .ellipsis{color:var(--fg-faint);padding:0 2px}
+  tr.is-selected-month td{background:rgba(45,212,207,.08)}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:28px}
+  .stat{background:var(--surface);border:1px solid var(--border-c);border-radius:12px;padding:14px 16px}
+  .stat .label{font-size:11px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+  .stat .value{font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums;font-weight:600}
+
+  section{margin-bottom:34px}
+  .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .section-head h2{font-size:16px;font-weight:600}
+  .section-head .hint{font-size:12px;color:var(--fg-muted)}
+
+  button{font-family:var(--sans);font-size:13px;font-weight:600;border-radius:8px;border:1px solid var(--border-c);background:var(--surface-2);color:var(--fg);padding:8px 14px;cursor:pointer;transition:border-color .15s,background .15s}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#06201e;border-color:var(--accent)}
+  button.primary:hover{filter:brightness(1.08)}
+  input[type=date], input[type=text]{font-family:var(--mono);font-size:13px;background:var(--surface-2);border:1px solid var(--border-c);border-radius:7px;color:var(--fg);padding:7px 10px}
+  input[type=date]:focus, input[type=text]:focus, input[type=number]:focus{outline:2px solid var(--accent);outline-offset:1px}
+
+  .roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .account-card{background:var(--surface);border:1px solid var(--border-c);border-radius:12px;padding:14px 16px;min-width:0;transition:opacity .12s,border-color .12s}
+  /* 2026-11-05新增：拖拽重新排序——卡片本身draggable=true，拖动时降低透明度，
+     悬停在另一张卡片上方/下方时用border-top/border-bottom当插入位置指示线（不是
+     重新渲染整个网格，避免拖拽过程中DOM被替换导致drag事件中断）。 */
+  .account-card.dragging{opacity:.35}
+  .account-card.drag-over-before{border-top:2px solid var(--accent)}
+  .account-card.drag-over-after{border-bottom:2px solid var(--accent)}
+  .drag-handle{cursor:grab;color:var(--fg-faint);font-size:13px;margin-right:7px;user-select:none;display:inline-block}
+  .drag-handle:active{cursor:grabbing}
+  .account-card .row1{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px}
+  .account-card .acc{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--accent)}
+  .account-card .cum{font-family:var(--mono);font-size:14px;font-variant-numeric:tabular-nums;font-weight:600}
+  .account-card .name{font-size:13px;color:var(--fg);margin-bottom:8px;overflow-wrap:anywhere}
+  .account-card .meta{font-size:11px;color:var(--fg-muted);display:flex;flex-wrap:wrap;gap:6px 10px}
+  .account-card .note{font-size:11px;color:var(--fg-faint);margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-c);overflow-wrap:anywhere}
+  .add-card{display:flex;align-items:center;justify-content:center;border:1px dashed var(--border-c);border-radius:12px;min-height:96px;color:var(--fg-muted);font-size:13px;cursor:pointer;background:transparent}
+  .add-card:hover{border-color:var(--accent);color:var(--accent)}
+  .account-card{cursor:pointer}
+  .account-card:hover{border-color:var(--accent)}
+  .edit-btn{background:transparent;border:1px solid var(--border-c);border-radius:6px;padding:2px 7px;font-size:10px;font-weight:600;color:var(--fg-muted);margin-left:8px;cursor:pointer}
+  .edit-btn:hover{color:var(--accent);border-color:var(--accent)}
+  .reset-btn:hover{color:var(--negative);border-color:var(--negative)}
+  .delete-btn:hover{color:var(--negative);border-color:var(--negative)}
+  .danger-btn{border-color:var(--negative);color:var(--negative)}
+  .danger-btn:hover{background:var(--negative);color:#1a0505}
+  #f_id:disabled{opacity:.6;cursor:not-allowed}
+
+  /* account detail modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(2,4,8,.9);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50}
+  .modal-panel{background:var(--surface);border:1px solid var(--border-c);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.6);max-width:760px;width:100%;padding:20px 22px 24px;max-height:calc(100vh - 80px);overflow-y:auto}
+  .modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--border-c)}
+  .modal-acc{font-family:var(--mono);color:var(--accent);font-size:18px;font-weight:700}
+  .modal-name{color:var(--fg-muted);font-size:13px;margin-top:2px}
+  .d-section{margin-bottom:22px}
+  .d-section h3{font-size:12px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;font-weight:600}
+  .d-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:10px}
+  .d-stat{background:var(--surface-2);border-radius:9px;padding:9px 11px}
+  .d-stat .l{font-size:10px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+  .d-stat .v{font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;font-weight:600}
+  .note-box{font-size:11.5px;color:var(--fg-faint);background:var(--surface-2);border-radius:8px;padding:10px 12px}
+  svg.chart{width:100%;height:auto;display:block;overflow:visible}
+  svg.chart text{font-family:var(--mono);font-size:9px;fill:var(--fg-faint)}
+  .axis-line{stroke:var(--border-c);stroke-width:1}
+  .scroll-box{max-height:240px;overflow-y:auto;border:1px solid var(--border-c);border-radius:10px}
+  table.mini-table{min-width:0;width:100%}
+  table.mini-table th, table.mini-table td{padding:6px 8px;font-size:11.5px}
+  table.mini-table th:first-child, table.mini-table td:first-child{position:static;background:transparent}
+
+  .form-panel{background:var(--surface);border:1px solid var(--border-c);border-radius:12px;padding:16px;margin-bottom:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;align-items:end}
+  .form-panel label{display:block;font-size:11px;color:var(--fg-muted);margin-bottom:5px}
+  .form-panel .full{grid-column:1/-1}
+  .form-panel .actions{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
+  .err{color:var(--negative);font-size:12px;margin-top:4px;min-height:14px}
+
+  .table-scroll{overflow-x:auto;border:1px solid var(--border-c);border-radius:12px}
+  table{border-collapse:collapse;width:100%;min-width:720px}
+  thead th{background:var(--surface-2);z-index:3;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg-muted);font-weight:600;padding:8px 8px;text-align:right;border-bottom:1px solid var(--border-c);white-space:nowrap}
+  thead tr:first-child th{position:sticky;top:0}
+  thead th:first-child{position:sticky;left:0;z-index:4;text-align:left;background:var(--surface-2)}
+  thead th.sub-head{font-size:9.5px;text-transform:none;font-weight:500;color:var(--fg-faint);padding-top:2px;padding-bottom:6px}
+  tbody td{padding:5px 6px;text-align:right;border-bottom:1px solid var(--border-c);font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  tbody td:first-child{position:sticky;left:0;background:var(--surface);z-index:2;text-align:left;font-size:12.5px;color:var(--fg-muted)}
+  tbody tr:hover td{background:var(--surface-2)}
+  tbody tr:hover td:first-child{background:var(--surface-2)}
+  tbody tr.is-today td:first-child{color:var(--amber);font-weight:700}
+  th .acc-id{display:block;color:var(--fg);font-size:12px}
+  th .acc-name{display:block;font-weight:400;font-size:9.5px;color:var(--fg-faint);text-transform:none;margin-top:1px;max-width:92px;overflow:hidden;text-overflow:ellipsis}
+  td.total-col{font-weight:700;color:var(--fg)}
+  tfoot td{padding:9px 6px;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:700;border-top:2px solid var(--border-c);background:var(--surface-2)}
+  tfoot td:first-child{position:sticky;left:0;background:var(--surface-2);z-index:2;text-align:left;font-weight:600;color:var(--fg-muted);font-size:12px}
+
+  .cell-input{width:72px;background:transparent;border:1px solid transparent;border-radius:5px;color:inherit;font:inherit;text-align:right;padding:4px 5px}
+  .cell-input:hover{border-color:var(--border-c)}
+  .cell-input:focus{border-color:var(--accent);background:var(--bg);outline:none}
+  .cell-input:disabled{color:var(--fg-faint);background:transparent;border-color:transparent}
+  .cell-input.pos{color:var(--positive)}
+  .cell-input.neg{color:var(--negative)}
+  .cell-input.lot{color:var(--fg)}
+
+  .pos{color:var(--positive)}
+  .neg{color:var(--negative)}
+  .muted{color:var(--fg-muted)}
+  .lotblue{color:var(--lotblue)}
+
+  .empty-state{border:1px dashed var(--border-c);border-radius:12px;padding:28px 20px;text-align:center;color:var(--fg-muted);font-size:13px}
+  .empty-state b{color:var(--fg)}
+
+  footer{color:var(--fg-faint);font-size:11px;padding-top:18px;border-top:1px solid var(--border-c);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+  @media (max-width:640px){
+    .page-header h1{font-size:21px}
+    .stats{grid-template-columns:repeat(2,1fr)}
+  }
+</style>
+
+<div class="wrap">
+  <div class="page-header">
+    <div>
+      <div class="eyebrow">XAUUSD · EA Accounts</div>
+      <h1>Aims EA</h1>
+      <div class="sub">Logged by hand each day</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+      <div class="today-badge">Today <b id="todayLabel">—</b></div>
+      <div class="month-switch" id="monthSwitch">
+        <button class="month-arrow" id="monthPrev" title="Previous month">‹</button>
+        <span class="month-switch-label" id="monthLabel">—</span>
+        <button class="month-arrow" id="monthNext" title="Next month">›</button>
+        <button class="month-jump" id="monthJumpToday" style="display:none">This month</button>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <div class="stats" id="statsRow">
+      <div class="stat"><div class="label">Active Accounts</div><div class="value" id="statCount">—</div></div>
+      <div class="stat"><div class="label">Days Logged</div><div class="value" id="statDays">—</div></div>
+      <div class="stat"><div class="label">Yesterday's Total</div><div class="value" id="statToday">—</div></div>
+      <div class="stat"><div class="label">Total P&amp;L</div><div class="value" id="statTotal">—</div></div>
+      <div class="stat"><div class="label">Total Lots P&amp;L</div><div class="value lotblue" id="statLotsUsd">—</div></div>
+      <div class="stat"><div class="label">Grand Total (P&amp;L+Lots)</div><div class="value" id="statGrandTotal">—</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Accounts</h2>
+      <div class="hint" id="rosterHint">Custom order · drag ⠿ to reorder</div>
+    </div>
+    <div id="addAccountPanel" class="form-panel" style="display:none">
+      <div><label>Account</label><input type="text" id="f_id" placeholder="e.g. 5862"></div>
+      <div><label>Strategy / EA name</label><input type="text" id="f_name" placeholder="e.g. Pullback M15"></div>
+      <div><label>Start date</label><input type="date" id="f_start"></div>
+      <div class="full"><label>Note (optional)</label><input type="text" id="f_note" placeholder="parameters / methodology note"></div>
+      <div class="full" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="f_lot" style="width:auto"><label style="margin:0" for="f_lot">Also log daily lot size for this account</label></div>
+      <div><label>1 Lot = $ (this account)</label><input type="number" id="f_lotrate" step="0.01" min="0.01" placeholder="10"></div>
+      <div class="full err" id="f_err"></div>
+      <div class="actions">
+        <button id="f_cancel">Cancel</button>
+        <button class="primary" id="f_submit">Save</button>
+      </div>
+    </div>
+    <div class="roster" id="rosterGrid">
+      <div class="empty-state">Loading accounts…</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Daily P&amp;L Log</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="date" id="newDate">
+        <button class="primary" id="addDateBtn">+ Add date</button>
+      </div>
+    </div>
+    <div id="matrixArea">
+      <div class="empty-state">Loading log…</div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Synced to Supabase — the same data shows on every device that opens this file</span>
+    <span id="localStatus"></span>
+  </footer>
+</div>
+
+<div class="modal-overlay" id="detailOverlay">
+  <div class="modal-panel">
+    <div class="modal-head">
+      <div>
+        <div class="modal-acc" id="d_acc"></div>
+        <div class="modal-name" id="d_name"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+        <div style="display:flex;gap:8px"><button id="d_delete" class="danger-btn">Delete account</button><button id="d_reset" class="danger-btn">Reset to zero</button><button id="d_edit">Edit</button><button id="d_close">Close</button></div>
+        <div class="month-switch" id="modalMonthSwitch">
+          <button class="month-arrow" id="d_monthPrev" title="Previous month">‹</button>
+          <span class="month-switch-label" id="d_monthLabel">—</span>
+          <button class="month-arrow" id="d_monthNext" title="Next month">›</button>
+        </div>
+      </div>
+    </div>
+    <div id="d_body"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // 2026-11-09 一次性发布助手：在任何其它逻辑修改DOM之前，先把当前文档的原始
+  // 静态结构存一份快照（这时候账户卡片/矩阵还是"Loading..."占位符，脚本还没跑），
+  // 用于把这份文件发布到Supabase Storage，生成一个真正的https网址（手机上
+  // "添加到主屏幕"用）。发布逻辑本身不碰任何业务数据，只是把这份静态HTML源码原样
+  // 传上去。平时用不到，只在需要重新发布这个文件时，从浏览器控制台手动调用
+  // window.__publishToStorage()。
+  window.__pageSourceSnapshot = '<!doctype html>\n' + document.documentElement.outerHTML;
+  window.__publishToStorage = async function(filename){
+    const url = 'https://mxrtfqgdueustjbntkcm.supabase.co/storage/v1/object/ea-tracker/' + filename;
+    const key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14cnRmcWdkdWV1c3RqYm50a2NtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyNjUyODEsImV4cCI6MjEwMjg0MTI4MX0.wP35ljL6XDwrkPp_al2FiEahJ-OS_-ylzRc7o3sudfU';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'text/html; charset=utf-8', 'x-upsert': 'true' },
+      body: window.__pageSourceSnapshot
+    });
+    const text = await res.text().catch(()=> '');
+    return { status: res.status, ok: res.ok, text };
+  };
+
+  const LS_DEMOS = 'ea_accounts_tracker_2.accounts.v1';
+  const LS_DAILY = 'ea_accounts_tracker_2.daily.v1';
+
+  // 2026-11-09新增（Billy要求）：数据同步到Supabase云端表（ea_tracker_accounts /
+  // ea_tracker_daily），这样手机打开同一份HTML文件也能看到桌面录入的真实数据，不再
+  // 只存在这台电脑浏览器的localStorage里。localStorage仍然保留一份作为离线缓存/
+  // 兜底（断网时还能用，上次成功同步的数据不会丢），但Supabase才是"谁更新了就都看得到"
+  // 的那一份真相源。tracker字段固定是'aims_ea'，用来和Daily P&L Tracker那份独立区分
+  // （同一批表，两个tracker互不干扰）。
+  const SUPABASE_URL = 'https://mxrtfqgdueustjbntkcm.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14cnRmcWdkdWV1c3RqYm50a2NtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyNjUyODEsImV4cCI6MjEwMjg0MTI4MX0.wP35ljL6XDwrkPp_al2FiEahJ-OS_-ylzRc7o3sudfU';
+  const TRACKER_ID = 'aims_ea';
+
+  async function sbFetch(path, options){
+    options = options || {};
+    const headers = Object.assign({
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json'
+    }, options.headers || {});
+    const res = await fetch(SUPABASE_URL + '/rest/v1/' + path, Object.assign({}, options, { headers }));
+    if (!res.ok){
+      const text = await res.text().catch(()=> '');
+      throw new Error('Supabase ' + res.status + ': ' + text);
+    }
+    return res;
+  }
+
+  async function sbLoadAccounts(){
+    const res = await sbFetch(`ea_tracker_accounts?tracker=eq.${TRACKER_ID}&order=sort_order.asc`);
+    const rows = await res.json();
+    const map = {};
+    rows.forEach(r => {
+      map[r.id] = {
+        id: r.id,
+        name: r.name || '',
+        start_date: r.start_date,
+        note: r.note || '',
+        order: r.sort_order,
+        track_lot: !!r.track_lot,
+        lot_usd_rate: (typeof r.lot_usd_rate === 'number') ? r.lot_usd_rate : undefined
+      };
+    });
+    return map;
+  }
+
+  async function sbLoadDaily(){
+    const res = await sbFetch(`ea_tracker_daily?tracker=eq.${TRACKER_ID}`);
+    const rows = await res.json();
+    const map = {};
+    rows.forEach(r => {
+      const rec = map[r.entry_date] || { date: r.entry_date };
+      if (r.pnl !== null && r.pnl !== undefined) rec[r.account_id] = Number(r.pnl);
+      if (r.lot !== null && r.lot !== undefined) rec[r.account_id + '_lot'] = Number(r.lot);
+      map[r.entry_date] = rec;
+    });
+    return map;
+  }
+
+  function sbUpsertAccount(d){
+    return sbFetch('ea_tracker_accounts?on_conflict=tracker,id', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify([{
+        tracker: TRACKER_ID,
+        id: d.id,
+        name: d.name || null,
+        start_date: d.start_date || null,
+        track_lot: !!d.track_lot,
+        sort_order: typeof d.order === 'number' ? d.order : 0,
+        note: d.note || null,
+        lot_usd_rate: (typeof d.lot_usd_rate === 'number') ? d.lot_usd_rate : null
+      }])
+    }).catch(err => { setStatus('⚠ 云端同步失败(账户信息)，已保存在本机：' + err.message, true); });
+  }
+
+  function sbUpsertAccountsBatch(list){
+    return sbFetch('ea_tracker_accounts?on_conflict=tracker,id', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(list.map(d => ({
+        tracker: TRACKER_ID, id: d.id, name: d.name || null, start_date: d.start_date || null,
+        track_lot: !!d.track_lot, sort_order: typeof d.order === 'number' ? d.order : 0,
+        note: d.note || null, lot_usd_rate: (typeof d.lot_usd_rate === 'number') ? d.lot_usd_rate : null
+      })))
+    }).catch(err => { setStatus('⚠ 云端同步失败(账户顺序)，已保存在本机：' + err.message, true); });
+  }
+
+  function sbUpsertDaily(date, id, pnl, lot){
+    return sbFetch('ea_tracker_daily?on_conflict=tracker,entry_date,account_id', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify([{
+        tracker: TRACKER_ID, entry_date: date, account_id: id,
+        pnl: (pnl === undefined || pnl === null || isNaN(pnl)) ? null : pnl,
+        lot: (lot === undefined || lot === null || isNaN(lot)) ? null : lot
+      }])
+    }).catch(err => { setStatus('⚠ 云端同步失败(当天数据)，已保存在本机：' + err.message, true); });
+  }
+
+  function sbDeleteDailyForAccount(id){
+    return sbFetch(`ea_tracker_daily?tracker=eq.${TRACKER_ID}&account_id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' })
+      .catch(err => { setStatus('⚠ 云端同步失败(清空账户)，已保存在本机：' + err.message, true); });
+  }
+
+  function sbDeleteAccount(id){
+    return sbFetch(`ea_tracker_accounts?tracker=eq.${TRACKER_ID}&id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' })
+      .catch(err => { setStatus('⚠ 云端同步失败(删除账户)，已保存在本机：' + err.message, true); });
+  }
+
+  const SEED_ACCOUNTS = [];
+
+  function todayStr(){
+    // Local calendar date, not UTC — avoids the "today" rolling over at UTC
+    // midnight instead of this device's actual midnight.
+    const d = new Date();
+    const localAsUTC = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+    return localAsUTC.toISOString().slice(0,10);
+  }
+  function yesterdayStr(){
+    const d = new Date(todayStr() + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().slice(0,10);
+  }
+  const WEEKDAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  function weekdayOf(dateStr){ return WEEKDAY_ABBR[new Date(dateStr + 'T00:00:00Z').getUTCDay()]; }
+  let demos = {};   // id -> {id,name,note,start_date,order,track_lot}
+  let daily = {};   // date -> {date, [id]: number, [id+'_lot']: number}
+  let editingId = null;
+  let currentDetailId = null;
+  const ACCOUNTS_PER_PAGE = 5;   // Daily P&L Log groups account columns into pages of this size
+  let accountPage = 0;           // 0-indexed; Date column / Daily Total / Grand Total always use the full list
+
+  function loadLocal(key, fallback){
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch(e){ /* ignore — fall back below */ }
+    return fallback;
+  }
+  function saveLocal(key, value){
+    try { localStorage.setItem(key, JSON.stringify(value)); }
+    catch(e){ setStatus('Could not save to local storage (browser storage may be blocked)', true); }
+  }
+
+  async function initState(){
+    const seedMap = {};
+    SEED_ACCOUNTS.forEach(a => seedMap[a.id] = a);
+    // Local cache is the instant fallback (used if offline); Supabase is the
+    // source of truth and overwrites it as soon as it loads successfully —
+    // EXCEPT: 2026-11-09 Billy lost 5 real Aims EA accounts because an empty
+    // cloud response silently overwrote non-empty local data on first load
+    // after this file was switched to Supabase sync. Guard added: if the
+    // cloud comes back empty for accounts/daily but the local cache is NOT
+    // empty, treat that as "this device hasn't done its first upload yet" —
+    // push the local data UP to Supabase instead of pulling the empty cloud
+    // DOWN over it. An empty cloud response must never be allowed to erase
+    // non-empty local data again.
+    demos = loadLocal(LS_DEMOS, seedMap);
+    daily = loadLocal(LS_DAILY, {});
+    try {
+      const [cloudAccounts, cloudDaily] = await Promise.all([sbLoadAccounts(), sbLoadDaily()]);
+      const localAccountsList = Object.values(demos);
+      const hasLocalAccounts = localAccountsList.length > 0;
+      const hasCloudAccounts = Object.keys(cloudAccounts).length > 0;
+      if (hasCloudAccounts){
+        demos = cloudAccounts;
+      } else if (hasLocalAccounts){
+        await sbUpsertAccountsBatch(localAccountsList);
+      }
+
+      const localDates = Object.keys(daily);
+      const hasLocalDaily = localDates.length > 0;
+      const hasCloudDaily = Object.keys(cloudDaily).length > 0;
+      if (hasCloudDaily){
+        daily = cloudDaily;
+      } else if (hasLocalDaily){
+        const pushes = [];
+        for (const dt of localDates){
+          const rec = daily[dt];
+          for (const key of Object.keys(rec)){
+            if (key === 'date' || key.endsWith('_lot')) continue;
+            pushes.push(sbUpsertDaily(dt, key, rec[key], rec[key + '_lot']));
+          }
+        }
+        await Promise.all(pushes);
+      }
+
+      saveLocal(LS_DEMOS, demos);
+      saveLocal(LS_DAILY, daily);
+      setStatus('已从云端同步 · ' + new Date().toLocaleTimeString(), false);
+    } catch(err){
+      setStatus('⚠ 无法连接云端，显示的是本机上次缓存的数据：' + err.message, true);
+    }
+  }
+
+  document.getElementById('todayLabel').textContent = todayStr();
+  document.getElementById('newDate').value = todayStr();
+
+  function fmtMoney(n){
+    if (n === undefined || n === null || isNaN(n)) return '—';
+    const sign = n > 0 ? '+' : (n < 0 ? '' : '');
+    return sign + n.toFixed(2);
+  }
+  function cls(n){ return n > 0 ? 'pos' : (n < 0 ? 'neg' : 'muted'); }
+
+  function sortedAccountList(){
+    return Object.values(demos).sort((a,b)=>{
+      const oa = (typeof a.order === 'number') ? a.order : 999999;
+      const ob = (typeof b.order === 'number') ? b.order : 999999;
+      if (oa !== ob) return oa - ob;
+      if (a.start_date !== b.start_date) return a.start_date < b.start_date ? -1 : 1;
+      return a.id < b.id ? -1 : 1;
+    });
+  }
+
+  function latestLot(id){
+    const dates = Object.keys(daily).sort().reverse();
+    for (const dt of dates){
+      const v = daily[dt] && daily[dt][id + '_lot'];
+      if (typeof v === 'number') return v;
+    }
+    return null;
+  }
+  function totalLot(id){
+    let sum = 0, has = false;
+    for (const dt of Object.keys(daily)){
+      const v = daily[dt][id + '_lot'];
+      if (typeof v === 'number'){ sum += v; has = true; }
+    }
+    return has ? sum : null;
+  }
+  function fmtLot(n){
+    return (n === null || n === undefined || isNaN(n)) ? '—' : n.toFixed(2);
+  }
+
+  // 2026-10-28新增（Billy要求）：手数 → $ 换算，默认1 Lot = $10，但2026-10-28下午改成
+  // 每个账号可以在Edit表单里单独调整自己的换算率（因为不同EA/品种的合约规格可能不一样），
+  // 存在账号自己的 demos[id].lot_usd_rate 字段里，没有这个字段的旧账号/新建时留空都退回默认10。
+  // 只用于显示（Accounts卡片 + 顶部统计块 + 详情弹窗），完全不碰 Daily P&L Log 矩阵表本身
+  // 的任何数据/渲染逻辑，也不是独立的全局设置。
+  const LOT_TO_USD_RATE = 10;
+  function fmtUsd(n){
+    return (n === null || n === undefined || isNaN(n)) ? '—' : ('$' + n.toFixed(2));
+  }
+  function acctLotRate(d){
+    const r = d && d.lot_usd_rate;
+    return (typeof r === 'number' && r > 0) ? r : LOT_TO_USD_RATE;
+  }
+
+  function cumulativeFor(id){
+    let sum = 0, has = false;
+    for (const d of Object.values(daily)){
+      if (typeof d[id] === 'number'){ sum += d[id]; has = true; }
+    }
+    return has ? sum : null;
+  }
+
+  function dailyRowsForAccount(id){
+    const dates = Object.keys(daily).filter(dt => typeof daily[dt][id] === 'number').sort();
+    let run = 0;
+    return dates.map(dt => {
+      run += daily[dt][id];
+      return { date: dt, pnl: daily[dt][id], lot: daily[dt][id + '_lot'], cum: run };
+    });
+  }
+
+  // 2026-11-02新增：月份切换（Billy要求 Daily P&L Tracker顶部统计/Accounts卡片/详情弹窗
+  // 都改成"只看选中的那个月"，不再是all-time cumulative；可以往回翻看之前的月份，相当于
+  // 每个月单独存档）。selectedMonth是唯一真相源（'YYYY-MM'），默认=当前自然月。
+  // 明确没有动的地方：Daily P&L Log矩阵表（renderMatrix，含tfoot的Total/Latest Lot）
+  // 继续用all-time的cumulativeFor()/totalLot()，和这次月份切换完全无关，矩阵表看到的
+  // 永远是全部历史数据，不受selectedMonth影响。latestLot()/daysRunning()也不受影响
+  // （"最新手数"和"开跑第几个交易日"本来就该是all-time口径，不是按月的数字）。
+  let selectedMonth = todayStr().slice(0,7);
+
+  function currentMonthStr(){ return todayStr().slice(0,7); }
+  const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function monthLabel(m){
+    const parts = m.split('-');
+    const y = Number(parts[0]), mo = Number(parts[1]);
+    return MONTH_ABBR[mo-1] + ' ' + y;
+  }
+  function shiftMonth(m, delta){
+    const parts = m.split('-');
+    let y = Number(parts[0]), mo = Number(parts[1]) + delta;
+    while (mo > 12){ mo -= 12; y++; }
+    while (mo < 1){ mo += 12; y--; }
+    return y + '-' + String(mo).padStart(2,'0');
+  }
+  function datesInMonth(month){
+    return Object.keys(daily).filter(dt => dt.slice(0,7) === month).sort();
+  }
+  function monthSumFor(id, month){
+    let sum = 0, has = false;
+    for (const dt of datesInMonth(month)){
+      const v = daily[dt][id];
+      if (typeof v === 'number'){ sum += v; has = true; }
+    }
+    return has ? sum : null;
+  }
+  function monthLotTotalFor(id, month){
+    let sum = 0, has = false;
+    for (const dt of datesInMonth(month)){
+      const v = daily[dt][id + '_lot'];
+      if (typeof v === 'number'){ sum += v; has = true; }
+    }
+    return has ? sum : null;
+  }
+  // Like dailyRowsForAccount(), but scoped to one month, with its OWN running
+  // cumulative that starts fresh at 0 for that month — an independent
+  // "mini equity curve" per month, not a continuation of the all-time total.
+  function monthRowsForAccount(id, month){
+    const dates = datesInMonth(month).filter(dt => typeof daily[dt][id] === 'number');
+    let run = 0;
+    return dates.map(dt => {
+      run += daily[dt][id];
+      return { date: dt, pnl: daily[dt][id], lot: daily[dt][id + '_lot'], cum: run };
+    });
+  }
+  function renderWeekdayChartForRows(rows){
+    const order = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const sums = {}; order.forEach(k=>sums[k]=0);
+    for (const r of rows){ sums[weekdayOf(r.date)] += r.pnl; }
+    return buildBarChart(order.map(k => ({ label:k, value:sums[k] })));
+  }
+  function renderMonthSwitch(){
+    const label = monthLabel(selectedMonth);
+    const isCurrent = selectedMonth === currentMonthStr();
+    ['monthLabel','d_monthLabel'].forEach(elId => {
+      const el = document.getElementById(elId);
+      if (el) el.textContent = label;
+    });
+    ['monthSwitch','modalMonthSwitch'].forEach(elId => {
+      const el = document.getElementById(elId);
+      if (el) el.classList.toggle('is-archive', !isCurrent);
+    });
+    ['monthNext','d_monthNext'].forEach(elId => {
+      const el = document.getElementById(elId);
+      if (el) el.disabled = isCurrent;
+    });
+    const jumpBtn = document.getElementById('monthJumpToday');
+    if (jumpBtn) jumpBtn.style.display = isCurrent ? 'none' : 'inline-block';
+    const hint = document.getElementById('rosterHint');
+    if (hint) hint.textContent = 'Custom order · ' + label + (isCurrent ? ' (current month)' : ' (archive)') + ' · drag ⠿ to reorder';
+  }
+  function setSelectedMonth(m){
+    selectedMonth = m;
+    renderMonthSwitch();
+    renderStats();
+    renderRoster();
+    if (currentDetailId && document.getElementById('detailOverlay').style.display === 'flex'){
+      renderDetailBody(currentDetailId);
+    }
+  }
+
+  function monthlyRows(id){
+    const byMonth = {};
+    for (const dt of Object.keys(daily).sort()){
+      const v = daily[dt][id];
+      if (typeof v !== 'number') continue;
+      const m = dt.slice(0,7);
+      if (!byMonth[m]) byMonth[m] = { days:0, net:0, wins:0, best:null, worst:null };
+      const row = byMonth[m];
+      row.days++; row.net += v; if (v > 0) row.wins++;
+      if (row.best === null || v > row.best) row.best = v;
+      if (row.worst === null || v < row.worst) row.worst = v;
+    }
+    return Object.keys(byMonth).sort().reverse().map(m => ({ month: m, ...byMonth[m] }));
+  }
+
+  function buildBarChart(items){
+    const W = 640, H = 170, padL = 8, padR = 8, padT = 16, padB = 22;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const maxAbs = Math.max(1, ...items.map(it => Math.abs(it.value || 0)));
+    const zeroY = padT + plotH/2;
+    const scaleY = (plotH/2) / maxAbs;
+    const n = items.length;
+    const slot = plotW / n;
+    const barW = Math.max(6, Math.min(34, slot*0.55));
+    let bars = '';
+    items.forEach((it,i)=>{
+      const cx = padL + slot*i + slot/2;
+      const v = it.value || 0;
+      const h = Math.abs(v)*scaleY;
+      const y = v >= 0 ? zeroY - h : zeroY;
+      const color = v > 0 ? 'var(--positive)' : (v < 0 ? 'var(--negative)' : 'var(--fg-faint)');
+      const label = esc(it.label);
+      bars += `<g><rect x="${(cx-barW/2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="3" style="fill:${color}"><title>${label}: ${fmtMoney(v)}</title></rect>
+        <text x="${cx.toFixed(1)}" y="${H-6}" text-anchor="middle">${label}</text></g>`;
+    });
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      <line class="axis-line" x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W-padR}" y2="${zeroY.toFixed(1)}"></line>
+      ${bars}
+    </svg>`;
+  }
+
+  function renderWeekdayChart(id){
+    const order = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const sums = {}; order.forEach(k=>sums[k]=0);
+    for (const dt of Object.keys(daily)){
+      const v = daily[dt][id];
+      if (typeof v !== 'number') continue;
+      sums[weekdayOf(dt)] += v;
+    }
+    return buildBarChart(order.map(k => ({ label:k, value:sums[k] })));
+  }
+
+  function renderMonthChart(id){
+    const byMonth = {};
+    for (const dt of Object.keys(daily)){
+      const v = daily[dt][id];
+      if (typeof v !== 'number') continue;
+      const m = dt.slice(0,7);
+      byMonth[m] = (byMonth[m]||0) + v;
+    }
+    const months = Object.keys(byMonth).sort();
+    return buildBarChart(months.map(m => ({ label: m.slice(2), value: byMonth[m] })));
+  }
+
+  function buildLineChart(entries){
+    const W = 640, H = 170, padL = 40, padR = 10, padT = 14, padB = 20;
+    const plotW = W-padL-padR, plotH = H-padT-padB;
+    const vals = entries.map(e=>e.cum);
+    const minV = Math.min(0, ...vals), maxV = Math.max(0, ...vals);
+    const range = (maxV-minV) || 1;
+    const n = entries.length;
+    const xFor = i => padL + (n<=1 ? plotW/2 : plotW*i/(n-1));
+    const yFor = v => padT + plotH - ((v-minV)/range)*plotH;
+    const zeroY = yFor(0);
+    const path = entries.map((e,i)=> (i===0?'M':'L') + xFor(i).toFixed(1)+','+yFor(e.cum).toFixed(1)).join(' ');
+    const points = entries.map((e,i)=>{
+      const col = e.cum >= 0 ? 'var(--positive)' : 'var(--negative)';
+      return `<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(e.cum).toFixed(1)}" r="3" style="fill:${col}"><title>${e.date}: ${fmtMoney(e.cum)}</title></circle>`;
+    }).join('');
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      <line class="axis-line" x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W-padR}" y2="${zeroY.toFixed(1)}"></line>
+      <path d="${path}" fill="none" style="stroke:var(--accent);stroke-width:2"></path>
+      ${points}
+      <text x="2" y="${padT+4}" text-anchor="start">${fmtMoney(maxV)}</text>
+      <text x="2" y="${H-padB+4}" text-anchor="start">${fmtMoney(minV)}</text>
+    </svg>`;
+  }
+
+  // Renders the modal body for the currently-open account, scoped to
+  // selectedMonth (shared with the main page's month switcher — changing
+  // the month anywhere re-renders this in place if the modal is open).
+  // "Monthly Breakdown" and "P&L by Month" stay all-time multi-month views
+  // on purpose (that's inherently a cross-month comparison) — everything
+  // else (headline stats, Daily Records, Equity Curve, P&L by Weekday) is
+  // scoped to just the selected month.
+  function renderDetailBody(id){
+    const d = demos[id];
+    if (!d) return;
+    document.getElementById('d_acc').textContent = d.id;
+    document.getElementById('d_name').textContent = d.name + (d.note ? ' · ' + d.note : '');
+    renderMonthSwitch();
+
+    const month = selectedMonth;
+    const rows = monthRowsForAccount(id, month);
+    const allRows = dailyRowsForAccount(id);
+    const allTimeTotal = allRows.length ? allRows[allRows.length-1].cum : null;
+    const body = document.getElementById('d_body');
+    const mLabel = esc(monthLabel(month));
+
+    let statsBlock;
+    if (rows.length === 0){
+      statsBlock = `<div class="empty-state">No daily P&amp;L logged for <b>${mLabel}</b> on this account.</div>`;
+    } else {
+      const total = rows.reduce((s,r)=>s+r.pnl,0);
+      const wins = rows.filter(r=>r.pnl>0).length;
+      const winRate = ((wins/rows.length)*100).toFixed(0);
+      const best = rows.reduce((a,r)=>r.pnl>a.pnl?r:a, rows[0]);
+      const worst = rows.reduce((a,r)=>r.pnl<a.pnl?r:a, rows[0]);
+      const avg = total/rows.length;
+      let lotStat = '';
+      if (d.track_lot){
+        const lastLotRow = [...rows].reverse().find(r=>typeof r.lot==='number');
+        const tl = monthLotTotalFor(id, month);
+        const tlUsd = (tl !== null) ? tl * acctLotRate(d) : null;
+        const grand = (tlUsd !== null) ? (total + tlUsd) : null;
+        lotStat = `<div class="d-stat"><div class="l">Latest Lot</div><div class="v lotblue">${lastLotRow?fmtLot(lastLotRow.lot):'—'}</div></div>
+          <div class="d-stat"><div class="l">Total Lot (month)</div><div class="v lotblue">${fmtLot(tl)}</div></div>
+          <div class="d-stat"><div class="l">Total Lots P&amp;L (month)</div><div class="v lotblue">${tlUsd!==null?fmtUsd(tlUsd):'—'}</div></div>
+          <div class="d-stat"><div class="l">Grand Total (month)</div><div class="v ${grand!==null?cls(grand):''}">${grand!==null?fmtMoney(grand):'—'}</div></div>`;
+      }
+      statsBlock = `<div class="d-stats">
+        <div class="d-stat"><div class="l">Total P&amp;L (${mLabel})</div><div class="v ${cls(total)}">${fmtMoney(total)}</div></div>
+        <div class="d-stat"><div class="l">Days Logged</div><div class="v">${rows.length}</div></div>
+        <div class="d-stat"><div class="l">Win Rate</div><div class="v">${winRate}%</div></div>
+        <div class="d-stat"><div class="l">Avg / Day</div><div class="v ${cls(avg)}">${fmtMoney(avg)}</div></div>
+        <div class="d-stat"><div class="l">Best Day</div><div class="v pos">${fmtMoney(best.pnl)}</div></div>
+        <div class="d-stat"><div class="l">Worst Day</div><div class="v neg">${fmtMoney(worst.pnl)}</div></div>
+        ${lotStat}
+      </div>`;
+    }
+
+    const dailyTableInner = rows.length
+      ? `<table class="mini-table"><thead><tr><th>Date</th><th>P&amp;L</th>${d.track_lot?'<th>Lot</th>':''}<th>Month Cum.</th></tr></thead>
+         <tbody>${[...rows].reverse().map(r=>`<tr><td>${r.date} ${weekdayOf(r.date)}</td><td class="${cls(r.pnl)}">${fmtMoney(r.pnl)}</td>${d.track_lot?`<td>${typeof r.lot==='number'?fmtLot(r.lot):'—'}</td>`:''}<td class="${cls(r.cum)}">${fmtMoney(r.cum)}</td></tr>`).join('')}</tbody></table>`
+      : `<div class="empty-state">No entries for ${mLabel}.</div>`;
+
+    body.innerHTML = `
+      <div class="d-section">
+        ${statsBlock}
+        <div class="note-box" style="margin-top:10px">All-time total: ${allTimeTotal!==null?fmtMoney(allTimeTotal):'—'} across ${allRows.length} day(s) logged since ${esc(d.start_date||'—')}. Use the ‹ › month switcher above to browse other months.</div>
+      </div>
+      <div class="d-section">
+        <h3>Daily Records — ${mLabel}</h3>
+        <div class="scroll-box" style="max-height:320px">${dailyTableInner}</div>
+      </div>
+      <div class="d-section">
+        <h3>Monthly Breakdown (all-time)</h3>
+        <div class="scroll-box">
+          <table class="mini-table"><thead><tr><th>Month</th><th>Days</th><th>Net</th><th>Win%</th><th>Best</th><th>Worst</th></tr></thead>
+          <tbody>${monthlyRows(id).map(m=>`<tr class="${m.month===month?'is-selected-month':''}"><td>${m.month}</td><td>${m.days}</td><td class="${cls(m.net)}">${fmtMoney(m.net)}</td><td>${((m.wins/m.days)*100).toFixed(0)}%</td><td class="pos">${fmtMoney(m.best)}</td><td class="neg">${fmtMoney(m.worst)}</td></tr>`).join('')}</tbody></table>
+        </div>
+      </div>
+      <div class="d-section">
+        <h3>Equity Curve — ${mLabel}</h3>
+        ${rows.length ? buildLineChart(rows.map(r=>({date:r.date, cum:r.cum}))) : `<div class="empty-state">No entries for ${mLabel}.</div>`}
+      </div>
+      <div class="d-section">
+        <h3>P&amp;L by Weekday — ${mLabel}</h3>
+        ${rows.length ? renderWeekdayChartForRows(rows) : `<div class="empty-state">No entries for ${mLabel}.</div>`}
+      </div>
+      <div class="d-section">
+        <h3>P&amp;L by Month (all-time)</h3>
+        ${renderMonthChart(id)}
+      </div>
+      <div class="note-box">Hour-of-day timing, trade-level MFE/MAE and correlation stats (like an MT5 Strategy Tester report) aren't available here — this log only stores one P&amp;L number per day, not individual trade timestamps. Those charts would need the actual MT5 report or trade history, not this manual log.</div>
+    `;
+  }
+
+  function openDetail(id){
+    const d = demos[id];
+    if (!d) return;
+    currentDetailId = id;
+    renderDetailBody(id);
+    document.getElementById('detailOverlay').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeDetail(){
+    document.getElementById('detailOverlay').style.display = 'none';
+    document.body.style.overflow = '';
+  }
+
+  function renderStats(){
+    const list = sortedAccountList();
+    const month = selectedMonth;
+    // "Active Accounts" stays the total roster headcount (all-time, unaffected
+    // by the month switcher) — it's "how many accounts do I have", not a P&L
+    // aggregate, so it shouldn't shrink just because an account is quiet
+    // this particular month.
+    document.getElementById('statCount').textContent = list.length;
+
+    // 2026-11-02起：Total P&L / Total Lots P&L / Grand Total 全部改成只看
+    // selectedMonth（默认当前自然月，可用月份切换器往回翻）,不再是all-time cumulative。
+    let total = 0, hasTotal = false;
+    let lotsUsdSum = 0, hasLotsUsd = false;
+    for (const d of list){
+      const c = monthSumFor(d.id, month);
+      if (c !== null){ total += c; hasTotal = true; }
+      if (!d.track_lot) continue;
+      const tl = monthLotTotalFor(d.id, month);
+      if (tl !== null){ lotsUsdSum += tl * acctLotRate(d); hasLotsUsd = true; }
+    }
+    const totalEl = document.getElementById('statTotal');
+    totalEl.textContent = hasTotal ? fmtMoney(total) : '—';
+    totalEl.className = 'value ' + (hasTotal ? cls(total) : '');
+
+    // "Yesterday's Total" intentionally stays the literal real "yesterday"
+    // regardless of which month is being browsed via the switcher — it's a
+    // quick "did I log yesterday yet" check, not a monthly aggregate, so it
+    // wouldn't mean anything useful while looking at an archived past month.
+    const y = yesterdayStr();
+    const yesterdayDoc = daily[y];
+    let ySum = 0, yHas = false;
+    if (yesterdayDoc){
+      for (const d of list){
+        if (typeof yesterdayDoc[d.id] === 'number'){ ySum += yesterdayDoc[d.id]; yHas = true; }
+      }
+    }
+    const todayEl = document.getElementById('statToday');
+    todayEl.textContent = yHas ? fmtMoney(ySum) : 'not logged';
+    todayEl.className = 'value ' + (yHas ? cls(ySum) : 'muted');
+
+    // "Days Logged" now counts days logged WITHIN the selected month (was
+    // all-time before) — this one does make sense to scope, since it's
+    // literally counting dated entries and tells you "how many days this
+    // month have numbers in them".
+    document.getElementById('statDays').textContent = datesInMonth(month).length;
+
+    const lotsUsdEl = document.getElementById('statLotsUsd');
+    if (lotsUsdEl) lotsUsdEl.textContent = hasLotsUsd ? fmtUsd(lotsUsdSum) : '—';
+
+    // 2026-10-28新增：Grand Total (P&L+Lots) = 上面"Total P&L"（真实盈亏）+ 这里
+    // "Total Lots P&L"（手数换算的$）简单相加，只是把两个已经算好的数字加在一起显示，
+    // 不是新的独立计算逻辑。只要两者至少有一个有值就显示（缺的一边按0算）。
+    const grandEl = document.getElementById('statGrandTotal');
+    if (grandEl){
+      if (hasTotal || hasLotsUsd){
+        const grand = (hasTotal ? total : 0) + (hasLotsUsd ? lotsUsdSum : 0);
+        grandEl.textContent = fmtMoney(grand);
+        grandEl.className = 'value ' + cls(grand);
+      } else {
+        grandEl.textContent = '—';
+        grandEl.className = 'value';
+      }
+    }
+  }
+
+  function daysRunning(startDate){
+    // Trading days only — counts Mon–Fri between start_date and today
+    // inclusive, skipping Saturdays/Sundays. Gold trades through most of
+    // Sunday evening and all weekdays, but Sat/Sun calendar days are still
+    // excluded here since Billy counts "Day N" in trading-day terms.
+    const start = new Date(startDate + 'T00:00:00Z');
+    const now = new Date(todayStr() + 'T00:00:00Z');
+    if (now < start) return 0;
+    let count = 0;
+    const cur = new Date(start);
+    while (cur <= now){
+      const dow = cur.getUTCDay(); // 0=Sun, 6=Sat
+      if (dow !== 0 && dow !== 6) count++;
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return count;
+  }
+
+  function esc(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderRoster(){
+    const grid = document.getElementById('rosterGrid');
+    const list = sortedAccountList();
+    if (list.length === 0){
+      grid.innerHTML = '<div class="empty-state">No accounts yet — add one below.</div><div class="add-card" id="addCardBtn">+ Add account</div>';
+      document.getElementById('addCardBtn').addEventListener('click', ()=> toggleAddPanel(true));
+    } else {
+      // 2026-11-02起：卡片右上角的cum、以及"Total {Lot} = ${$}"都改成只看
+      // selectedMonth（默认当前自然月），不再是all-time cumulative/totalLot。
+      const month = selectedMonth;
+      grid.innerHTML = list.map(d => {
+        const c = monthSumFor(d.id, month);
+        const tl = d.track_lot ? monthLotTotalFor(d.id, month) : null;
+        const tlUsd = (tl !== null) ? ` = ${fmtUsd(tl * acctLotRate(d))}` : '';
+        return `<div class="account-card" data-id="${esc(d.id)}" draggable="true">
+          <div class="row1"><span class="acc"><span class="drag-handle" title="Drag to reorder">⠿</span>${esc(d.id)}<button class="edit-btn" data-id="${esc(d.id)}">Edit</button><button class="edit-btn reset-btn" data-id="${esc(d.id)}" title="Clear all logged P&amp;L for this account">Reset</button><button class="edit-btn delete-btn" data-id="${esc(d.id)}" title="Permanently remove this account">Delete</button></span><span class="cum ${c===null?'muted':cls(c)}">${c===null?'—':fmtMoney(c)}</span></div>
+          <div class="name">${esc(d.name||'—')}</div>
+          <div class="meta"><span>Start ${esc(d.start_date||'—')}</span><span>Trading Day ${daysRunning(d.start_date)}</span>${d.track_lot ? `<span class="lotblue">Lot ${fmtLot(latestLot(d.id))}</span><span class="lotblue">Total ${tl===null?'—':fmtLot(tl)}${tlUsd}</span>` : ''}</div>
+          ${d.note ? `<div class="note">${esc(d.note)}</div>` : ''}
+        </div>`;
+      }).join('') + `<div class="add-card" id="addCardBtn">+ Add account</div>`;
+      document.getElementById('addCardBtn').addEventListener('click', ()=> toggleAddPanel(true));
+    }
+  }
+
+  // Compact page-number list for the account pager, e.g. [1,'…',4,5,6,'…',11].
+  // Always keeps page 1, the last page, and current±1; collapses the rest.
+  function pagerPageNumbers(current, total){
+    const keep = new Set([1, total, current - 1, current, current + 1]);
+    const sorted = [...keep].filter(p => p >= 1 && p <= total).sort((a,b) => a - b);
+    const out = [];
+    let prev = 0;
+    for (const p of sorted){
+      if (prev && p - prev > 1) out.push('…');
+      out.push(p);
+      prev = p;
+    }
+    return out;
+  }
+  function buildAccountPagerHtml(totalPages){
+    if (totalPages <= 1) return '';
+    const current = accountPage + 1; // display as 1-indexed
+    const nums = pagerPageNumbers(current, totalPages).map(p => p === '…'
+      ? `<span class="ellipsis">…</span>`
+      : `<button type="button" data-page="${p - 1}" class="${p - 1 === accountPage ? 'active' : ''}">${p}</button>`
+    ).join('');
+    return `<div class="acct-pager" id="acctPager">
+      <button type="button" data-page="${accountPage - 1}" ${accountPage === 0 ? 'disabled' : ''}>Prev</button>
+      ${nums}
+      <button type="button" data-page="${accountPage + 1}" ${accountPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+    </div>`;
+  }
+
+  function renderMatrix(){
+    const area = document.getElementById('matrixArea');
+    const list = sortedAccountList();
+    const dates = Object.keys(daily).sort().reverse();
+    if (list.length === 0){
+      area.innerHTML = '<div class="empty-state">Add at least one account above first.</div>';
+      return;
+    }
+    if (dates.length === 0){
+      area.innerHTML = `<div class="empty-state">No daily entries yet. Click <b>+ Add date</b> above to log the first day.</div>`;
+      return;
+    }
+    // Account columns are grouped into pages of ACCOUNTS_PER_PAGE when there
+    // are more accounts than fit comfortably in one view. The Date column
+    // and the Daily Total / Grand Total figures below always use the FULL
+    // list — only the per-account columns in between are paginated.
+    const totalPages = Math.max(1, Math.ceil(list.length / ACCOUNTS_PER_PAGE));
+    if (accountPage >= totalPages) accountPage = totalPages - 1;
+    if (accountPage < 0) accountPage = 0;
+    const pageList = list.slice(accountPage * ACCOUNTS_PER_PAGE, (accountPage + 1) * ACCOUNTS_PER_PAGE);
+
+    const todayD = todayStr();
+    let headRow1 = `<th rowspan="2">Date</th>` + pageList.map(d =>
+      `<th colspan="${d.track_lot?2:1}"><span class="acc-id">${esc(d.id)}</span><span class="acc-name" title="${esc(d.name||'')}">${esc(d.name||'')}</span></th>`
+    ).join('') + `<th rowspan="2">Daily Total</th>`;
+    let headRow2 = pageList.map(d =>
+      d.track_lot ? `<th class="sub-head">P&amp;L</th><th class="sub-head">Lot</th>` : `<th class="sub-head">P&amp;L</th>`
+    ).join('');
+
+    let body = dates.map(dt => {
+      // Daily Total sums EVERY account regardless of which page is shown.
+      let rowSum = 0, rowHas = false;
+      list.forEach(d => {
+        const v = daily[dt] && typeof daily[dt][d.id] === 'number' ? daily[dt][d.id] : '';
+        if (v !== ''){ rowSum += v; rowHas = true; }
+      });
+      const cells = pageList.map(d => {
+        const active = dt >= d.start_date;
+        const pnlV = daily[dt] && typeof daily[dt][d.id] === 'number' ? daily[dt][d.id] : '';
+        const pnlClass = pnlV === '' ? '' : (pnlV > 0 ? 'pos' : (pnlV < 0 ? 'neg' : ''));
+        const pnlCell = active
+          ? `<td><input class="cell-input ${pnlClass}" type="number" step="0.01" data-date="${dt}" data-id="${esc(d.id)}" data-field="pnl" value="${pnlV}"></td>`
+          : `<td><input class="cell-input" type="number" step="0.01" disabled placeholder="—"></td>`;
+        if (!d.track_lot) return pnlCell;
+        const lotV = daily[dt] && typeof daily[dt][d.id+'_lot'] === 'number' ? daily[dt][d.id+'_lot'] : '';
+        const lotCell = active
+          ? `<td><input class="cell-input lot" type="number" step="0.01" min="0" data-date="${dt}" data-id="${esc(d.id)}" data-field="lot" value="${lotV}"></td>`
+          : `<td><input class="cell-input" type="number" step="0.01" disabled placeholder="—"></td>`;
+        return pnlCell + lotCell;
+      }).join('');
+      return `<tr class="${dt===todayD?'is-today':''}"><td>${dt} ${weekdayOf(dt)}${dt===todayD?' · today':''}</td>${cells}<td class="total-col ${rowHas?cls(rowSum):'muted'}">${rowHas?fmtMoney(rowSum):'—'}</td></tr>`;
+    }).join('');
+
+    let footCells = pageList.map(d => {
+      const c = cumulativeFor(d.id);
+      const pnlFoot = `<td class="${c===null?'muted':cls(c)}">${c===null?'—':fmtMoney(c)}</td>`;
+      if (!d.track_lot) return pnlFoot;
+      return pnlFoot + `<td class="muted">${fmtLot(latestLot(d.id))}</td>`;
+    }).join('');
+    // Grand Total always sums EVERY account, not just the page shown.
+    let grandTotal = 0, grandHas = false;
+    for (const d of list){ const c = cumulativeFor(d.id); if (c!==null){ grandTotal+=c; grandHas=true; } }
+    let foot = `<tr><td>Total / Latest Lot</td>${footCells}<td class="${grandHas?cls(grandTotal):'muted'}">${grandHas?fmtMoney(grandTotal):'—'}</td></tr>`;
+
+    area.innerHTML = buildAccountPagerHtml(totalPages) + `<div class="table-scroll"><table>
+      <thead><tr>${headRow1}</tr><tr>${headRow2}</tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot>${foot}</tfoot>
+    </table></div>`;
+
+    area.querySelectorAll('.cell-input').forEach(inp => {
+      inp.addEventListener('change', onCellChange);
+    });
+    const pagerEl = document.getElementById('acctPager');
+    if (pagerEl){
+      pagerEl.querySelectorAll('button[data-page]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const p = Number(btn.dataset.page);
+          if (isNaN(p)) return;
+          accountPage = p;
+          renderMatrix();
+        });
+      });
+    }
+  }
+
+  function onCellChange(e){
+    const inp = e.target;
+    const date = inp.dataset.date, id = inp.dataset.id, field = inp.dataset.field || 'pnl';
+    if (!date || !id) return;
+    const key = field === 'lot' ? (id + '_lot') : id;
+    const raw = inp.value.trim();
+    const current = { ...(daily[date] || { date }) };
+    if (raw === ''){
+      delete current[key];
+    } else {
+      const num = Number(raw);
+      if (isNaN(num)){ inp.value = ''; return; }
+      current[key] = num;
+    }
+    daily[date] = current;
+    saveLocal(LS_DAILY, daily);
+    sbUpsertDaily(date, id, current[id], current[id + '_lot']);
+    renderStats(); renderRoster(); renderMatrix();
+  }
+
+  function setStatus(text, isErr){
+    // Lightweight inline notice; only used for local-storage write failures.
+    let el = document.getElementById('localStatus');
+    if (!el){
+      el = document.createElement('div');
+      el.id = 'localStatus';
+      el.style.cssText = 'font-size:12px;margin-top:10px';
+      document.querySelector('footer').prepend(el);
+    }
+    el.textContent = text;
+    el.style.color = isErr ? 'var(--negative)' : 'var(--fg-faint)';
+  }
+
+  function toggleAddPanel(show){
+    document.getElementById('addAccountPanel').style.display = show ? 'grid' : 'none';
+    if (show){
+      document.getElementById('f_err').textContent = '';
+      if (!editingId){
+        document.getElementById('f_id').value = '';
+        document.getElementById('f_id').disabled = false;
+        document.getElementById('f_name').value = '';
+        document.getElementById('f_start').value = todayStr();
+        document.getElementById('f_note').value = '';
+        document.getElementById('f_lot').checked = false;
+        document.getElementById('f_lotrate').value = LOT_TO_USD_RATE;
+      }
+    } else {
+      editingId = null;
+      document.getElementById('f_id').disabled = false;
+    }
+  }
+
+  function openEditForm(id){
+    const d = demos[id];
+    if (!d) return;
+    editingId = id;
+    document.getElementById('f_id').value = d.id;
+    document.getElementById('f_id').disabled = true;
+    document.getElementById('f_name').value = d.name || '';
+    document.getElementById('f_start').value = d.start_date || todayStr();
+    document.getElementById('f_note').value = d.note || '';
+    document.getElementById('f_lot').checked = !!d.track_lot;
+    document.getElementById('f_lotrate').value = acctLotRate(d);
+    toggleAddPanel(true);
+    document.getElementById('addAccountPanel').scrollIntoView({ behavior:'smooth', block:'center' });
+  }
+
+  document.getElementById('f_cancel').addEventListener('click', ()=> toggleAddPanel(false));
+  document.getElementById('f_submit').addEventListener('click', ()=>{
+    const id = editingId || document.getElementById('f_id').value.trim();
+    const name = document.getElementById('f_name').value.trim();
+    const start = document.getElementById('f_start').value;
+    const note = document.getElementById('f_note').value.trim();
+    const errEl = document.getElementById('f_err');
+    if (!id || !/^[A-Za-z0-9_.\-~:@+]+$/.test(id)){ errEl.textContent = 'Account ID must be letters/numbers only (no spaces or symbols)'; return; }
+    if (!editingId && demos[id]){ errEl.textContent = 'This account already exists'; return; }
+    if (!name){ errEl.textContent = 'Enter a strategy / EA name'; return; }
+    if (!start){ errEl.textContent = 'Pick a start date'; return; }
+    const trackLot = document.getElementById('f_lot').checked;
+    const lotRateRaw = document.getElementById('f_lotrate').value.trim();
+    let lotRate = Number(lotRateRaw);
+    if (lotRateRaw === '' || isNaN(lotRate) || lotRate <= 0) lotRate = LOT_TO_USD_RATE;
+    let order;
+    if (editingId && demos[editingId] && typeof demos[editingId].order === 'number'){
+      order = demos[editingId].order;
+    } else {
+      const existingOrders = Object.values(demos).map(d => typeof d.order === 'number' ? d.order : 0);
+      order = (existingOrders.length ? Math.max(...existingOrders) : 0) + 1;
+    }
+    const data = { id, name, start_date: start, note: note || '', track_lot: trackLot, order, lot_usd_rate: lotRate };
+    demos[id] = data;
+    saveLocal(LS_DEMOS, demos);
+    sbUpsertAccount(data);
+    toggleAddPanel(false);
+    renderStats(); renderRoster(); renderMatrix();
+  });
+
+  document.getElementById('addDateBtn').addEventListener('click', ()=>{
+    const dt = document.getElementById('newDate').value;
+    if (!dt) return;
+    if (daily[dt]){
+      const row = document.querySelector(`.cell-input[data-date="${dt}"]`);
+      if (row) row.focus();
+      return;
+    }
+    daily[dt] = { date: dt };
+    saveLocal(LS_DAILY, daily);
+    renderStats(); renderRoster(); renderMatrix();
+  });
+
+  document.getElementById('rosterGrid').addEventListener('click', (e)=>{
+    const deleteBtn = e.target.closest('.delete-btn');
+    if (deleteBtn){ e.stopPropagation(); deleteAccount(deleteBtn.dataset.id); return; }
+    const resetBtn = e.target.closest('.reset-btn');
+    if (resetBtn){ e.stopPropagation(); resetAccountData(resetBtn.dataset.id); return; }
+    const editBtn = e.target.closest('.edit-btn');
+    if (editBtn){ e.stopPropagation(); openEditForm(editBtn.dataset.id); return; }
+    const card = e.target.closest('.account-card');
+    if (card) openDetail(card.dataset.id);
+  });
+
+  // 2026-11-05新增（Billy要求）：账户卡片拖拽自由排序。原来"order"字段只能靠
+  // 新建账号时自动递增，没有UI能手动调整顺序；现在卡片可以直接拖拽互换位置，
+  // 松手时把新顺序写回每个账号的 demos[id].order（1..N，按卡片当前DOM顺序重新编号），
+  // 立刻 saveLocal 持久化。Daily P&L Log矩阵表的列顺序也用同一个sortedAccountList()，
+  // 所以拖卡片顺序会同步带动表格列顺序——这是预期行为，不是副作用（两处都叫"Custom order"）。
+  // 用原生HTML5 drag-and-drop（不是鼠标seudo-drag库），只支持鼠标，不支持触屏——这份工具
+  // 本来就是桌面双击打开用的，不需要触屏支持。拖拽时不重新渲染整个网格（避免DOM被替换
+  // 打断drag事件链），只用CSS class（drag-over-before/after）当插入位置的视觉指示线，
+  // 真正的重排和持久化只在drop那一刻发生一次。
+  let dragSrcId = null;
+  const rosterGridEl = document.getElementById('rosterGrid');
+
+  rosterGridEl.addEventListener('dragstart', (e)=>{
+    const card = e.target.closest('.account-card');
+    if (!card || e.target.closest('.edit-btn')){ e.preventDefault(); return; }
+    dragSrcId = card.dataset.id;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', dragSrcId); } catch(err) { /* some browsers require this call to not throw; ignore if blocked */ }
+  });
+
+  rosterGridEl.addEventListener('dragover', (e)=>{
+    if (!dragSrcId) return;
+    const card = e.target.closest('.account-card');
+    if (!card || card.dataset.id === dragSrcId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = card.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    card.classList.toggle('drag-over-before', before);
+    card.classList.toggle('drag-over-after', !before);
+  });
+
+  rosterGridEl.addEventListener('dragleave', (e)=>{
+    const card = e.target.closest('.account-card');
+    if (card) card.classList.remove('drag-over-before', 'drag-over-after');
+  });
+
+  rosterGridEl.addEventListener('drop', (e)=>{
+    const card = e.target.closest('.account-card');
+    if (!card || !dragSrcId) return;
+    e.preventDefault();
+    const targetId = card.dataset.id;
+    card.classList.remove('drag-over-before', 'drag-over-after');
+    if (targetId === dragSrcId) return;
+    const rect = card.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    reorderAccounts(dragSrcId, targetId, before);
+  });
+
+  rosterGridEl.addEventListener('dragend', ()=>{
+    rosterGridEl.querySelectorAll('.account-card').forEach(c => c.classList.remove('dragging', 'drag-over-before', 'drag-over-after'));
+    dragSrcId = null;
+  });
+
+  function reorderAccounts(srcId, targetId, insertBefore){
+    const ids = sortedAccountList().map(d => d.id);
+    const fromIdx = ids.indexOf(srcId);
+    if (fromIdx === -1 || !ids.includes(targetId)) return;
+    ids.splice(fromIdx, 1);
+    const toIdx = ids.indexOf(targetId);
+    ids.splice(insertBefore ? toIdx : toIdx + 1, 0, srcId);
+    ids.forEach((id, i) => { if (demos[id]) demos[id].order = i + 1; });
+    saveLocal(LS_DEMOS, demos);
+    sbUpsertAccountsBatch(ids.map(id => demos[id]).filter(Boolean));
+    renderRoster();
+    renderMatrix();
+  }
+  document.getElementById('d_close').addEventListener('click', closeDetail);
+  document.getElementById('d_edit').addEventListener('click', ()=>{
+    const id = currentDetailId;
+    closeDetail();
+    if (id) openEditForm(id);
+  });
+  document.getElementById('d_delete').addEventListener('click', ()=>{
+    const id = currentDetailId;
+    if (id && deleteAccount(id)) closeDetail();
+  });
+  document.getElementById('d_reset').addEventListener('click', ()=>{
+    const id = currentDetailId;
+    if (id && resetAccountData(id)) closeDetail();
+  });
+
+  // Clears every logged daily P&L (and lot) entry for one account, across all
+  // dates — used when an account is being reused/recalculated for a different
+  // EA config and its old numbers shouldn't bleed into the new test's totals.
+  // Does NOT touch the account's name/start_date/note (use Edit for that) or
+  // any other account's data. Destructive and irreversible, so it always
+  // confirms first.
+  function resetAccountData(id){
+    const d = demos[id];
+    if (!d) return false;
+    const rows = dailyRowsForAccount(id);
+    if (rows.length === 0){
+      alert(`Account ${id} (${d.name||'—'}) has no logged P&L yet — nothing to reset.`);
+      return false;
+    }
+    const total = rows[rows.length-1].cum;
+    const ok = confirm(
+      `Reset account ${id} (${d.name||'—'}) to zero?\n\n` +
+      `This permanently deletes all ${rows.length} logged daily P&L${d.track_lot?' + lot':''} entries for this account ` +
+      `(currently ${fmtMoney(total)} cumulative). Other accounts are not touched. This cannot be undone.\n\n` +
+      `Use this when you've reconfigured the EA on this account and want the new test to start from a clean slate.`
+    );
+    if (!ok) return false;
+    for (const dt of Object.keys(daily)){
+      const rec = daily[dt];
+      if (!Object.prototype.hasOwnProperty.call(rec, id) && !Object.prototype.hasOwnProperty.call(rec, id + '_lot')) continue;
+      const next = { ...rec };
+      delete next[id];
+      delete next[id + '_lot'];
+      daily[dt] = next;
+    }
+    saveLocal(LS_DAILY, daily);
+    sbDeleteDailyForAccount(id);
+    renderStats(); renderRoster(); renderMatrix();
+    return true;
+  }
+
+  // Permanently removes an account from the roster — unlike Reset (which only
+  // clears its logged P&L/lot history but keeps the account itself), Delete
+  // removes the account entry too, from local state, localStorage, AND
+  // Supabase (both ea_tracker_accounts and ea_tracker_daily rows for it).
+  function deleteAccount(id){
+    const d = demos[id];
+    if (!d) return false;
+    const rows = dailyRowsForAccount(id);
+    const ok = confirm(
+      `Permanently delete account ${id} (${d.name||'—'})?\n\n` +
+      `This removes it from the roster AND deletes all ${rows.length} logged daily P&L${d.track_lot?' + lot':''} entries for it, ` +
+      `on this device and in the cloud. This cannot be undone.`
+    );
+    if (!ok) return false;
+    delete demos[id];
+    for (const dt of Object.keys(daily)){
+      const rec = daily[dt];
+      if (!Object.prototype.hasOwnProperty.call(rec, id) && !Object.prototype.hasOwnProperty.call(rec, id + '_lot')) continue;
+      const next = { ...rec };
+      delete next[id];
+      delete next[id + '_lot'];
+      daily[dt] = next;
+    }
+    saveLocal(LS_DEMOS, demos);
+    saveLocal(LS_DAILY, daily);
+    sbDeleteAccount(id);
+    sbDeleteDailyForAccount(id);
+    renderStats(); renderRoster(); renderMatrix();
+    return true;
+  }
+  document.getElementById('detailOverlay').addEventListener('click', (e)=>{
+    if (e.target.id === 'detailOverlay') closeDetail();
+  });
+
+  // Month switcher — main page header and the detail modal share one
+  // selectedMonth state (see setSelectedMonth), so either control moves both.
+  document.getElementById('monthPrev').addEventListener('click', ()=> setSelectedMonth(shiftMonth(selectedMonth, -1)));
+  document.getElementById('monthNext').addEventListener('click', ()=>{
+    if (selectedMonth >= currentMonthStr()) return;
+    setSelectedMonth(shiftMonth(selectedMonth, 1));
+  });
+  document.getElementById('monthJumpToday').addEventListener('click', ()=> setSelectedMonth(currentMonthStr()));
+  document.getElementById('d_monthPrev').addEventListener('click', ()=> setSelectedMonth(shiftMonth(selectedMonth, -1)));
+  document.getElementById('d_monthNext').addEventListener('click', ()=>{
+    if (selectedMonth >= currentMonthStr()) return;
+    setSelectedMonth(shiftMonth(selectedMonth, 1));
+  });
+
+  initState().then(()=>{
+    renderMonthSwitch();
+    renderStats(); renderRoster(); renderMatrix();
+  });
+})();
+</script>
+
+</body>
+</html>
