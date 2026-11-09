@@ -1,0 +1,11 @@
+{
+  "name": "Aims EA",
+  "short_name": "Aims EA",
+  "start_url": "Aims EA.html",
+  "display": "standalone",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
+  "icons": [
+    { "src": "icon-aims.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Daily P&L Tracker",
+  "short_name": "P&L Tracker",
+  "start_url": "ea_accounts_tracker.html",
+  "display": "standalone",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
+  "icons": [
+    { "src": "icon-main.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
