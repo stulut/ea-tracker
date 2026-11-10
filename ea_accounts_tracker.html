@@ -593,10 +593,12 @@
   // 2026-11-02新增：月份切换（Billy要求 Daily P&L Tracker顶部统计/Accounts卡片/详情弹窗
   // 都改成"只看选中的那个月"，不再是all-time cumulative；可以往回翻看之前的月份，相当于
   // 每个月单独存档）。selectedMonth是唯一真相源（'YYYY-MM'），默认=当前自然月。
-  // 明确没有动的地方：Daily P&L Log矩阵表（renderMatrix，含tfoot的Total/Latest Lot）
-  // 继续用all-time的cumulativeFor()/totalLot()，和这次月份切换完全无关，矩阵表看到的
-  // 永远是全部历史数据，不受selectedMonth影响。latestLot()/daysRunning()也不受影响
-  // （"最新手数"和"开跑第几个交易日"本来就该是all-time口径，不是按月的数字）。
+  // 明确没有动的地方：Daily P&L Log矩阵表（renderMatrix）整体不受月份切换影响，
+  // 继续用all-time的cumulativeFor()/totalLot()，矩阵表看到的永远是全部历史数据，
+  // 不受selectedMonth影响。daysRunning()也不受影响（"开跑第几个交易日"本来就该是
+  // all-time口径，不是按月的数字）。〔2026-11-09：tfoot第二行原本显示latestLot()
+  // 标成"Latest Lot"，Billy反馈应改成显示totalLot()、标成"Total Lots"，已改——
+  // 跟这次月份切换改动无关，是单独一次需求。〕
   let selectedMonth = todayStr().slice(0,7);
 
   function currentMonthStr(){ return todayStr().slice(0,7); }
@@ -1068,12 +1070,12 @@
       const c = cumulativeFor(d.id);
       const pnlFoot = `<td class="${c===null?'muted':cls(c)}">${c===null?'—':fmtMoney(c)}</td>`;
       if (!d.track_lot) return pnlFoot;
-      return pnlFoot + `<td class="muted">${fmtLot(latestLot(d.id))}</td>`;
+      return pnlFoot + `<td class="muted">${fmtLot(totalLot(d.id))}</td>`;
     }).join('');
     // Grand Total always sums EVERY account, not just the page shown.
     let grandTotal = 0, grandHas = false;
     for (const d of list){ const c = cumulativeFor(d.id); if (c!==null){ grandTotal+=c; grandHas=true; } }
-    let foot = `<tr><td>Total / Latest Lot</td>${footCells}<td class="${grandHas?cls(grandTotal):'muted'}">${grandHas?fmtMoney(grandTotal):'—'}</td></tr>`;
+    let foot = `<tr><td>Total / Total Lots</td>${footCells}<td class="${grandHas?cls(grandTotal):'muted'}">${grandHas?fmtMoney(grandTotal):'—'}</td></tr>`;
 
     area.innerHTML = buildAccountPagerHtml(totalPages) + `<div class="table-scroll"><table>
       <thead><tr>${headRow1}</tr><tr>${headRow2}</tr></thead>
