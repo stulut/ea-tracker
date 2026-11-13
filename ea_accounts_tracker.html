@@ -264,6 +264,16 @@
     </div>
   </section>
 
+  <section>
+    <div class="section-head">
+      <h2>Recent Deletions</h2>
+      <div class="hint">Backups of the last Reset / Delete actions — Restore if one was a mistake</div>
+    </div>
+    <div id="trashArea">
+      <div class="empty-state">Loading…</div>
+    </div>
+  </section>
+
   <footer>
     <span>Synced to Supabase — the same data shows on every device that opens this file</span>
     <span id="localStatus"></span>
@@ -422,6 +432,132 @@
     return sbFetch(`ea_tracker_accounts?tracker=eq.${TRACKER_ID}&id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' })
       .catch(err => { setStatus('⚠ 云端同步失败(删除账户)，已保存在本机：' + err.message, true); });
   }
+
+  // 2026-11-13新增（Billy要求）：Reset/Delete 的误删安全网。这两个按钮本来是纯硬删除——
+  // Supabase里的行真删掉，localStorage也真清空，点了confirm就没有回头路。现在改成"先备份
+  // 再删"：点确定的那一刻，先把即将删除的数据（Reset=该账户的逐日P&L/Lot；Delete=逐日数据
+  // +账户资料本身）整份存一条快照进新建的 ea_tracker_trash 表，再执行原来的删除逻辑。备份
+  // 是fire-and-forget（不await），即使备份失败也不会卡住正常的删除操作——只是状态栏会提示
+  // 这次没留恢复点，不会假装"安全"。恢复点不设自动过期，attic多了Billy自己去Supabase手动清，
+  // 页面上"Recent Deletions"区块只负责展示最近20条、点Restore按原样写回。
+  function snapshotDailyForAccount(id){
+    const snap = [];
+    for (const dt of Object.keys(daily)){
+      const rec = daily[dt];
+      const hasPnl = Object.prototype.hasOwnProperty.call(rec, id);
+      const hasLot = Object.prototype.hasOwnProperty.call(rec, id + '_lot');
+      if (!hasPnl && !hasLot) continue;
+      snap.push({ date: dt, pnl: hasPnl ? rec[id] : null, lot: hasLot ? rec[id + '_lot'] : null });
+    }
+    return snap;
+  }
+
+  function sbSaveTrash(action, id, accountSnapshot, dailySnapshot){
+    return sbFetch('ea_tracker_trash', {
+      method: 'POST',
+      body: JSON.stringify([{
+        tracker: TRACKER_ID, action, account_id: id,
+        account_snapshot: accountSnapshot || null,
+        daily_snapshot: dailySnapshot || []
+      }])
+    }).catch(err => {
+      setStatus('⚠ 备份到"Recent Deletions"失败，这次' + (action === 'delete' ? '删除' : '重置') + '没有留下恢复点：' + err.message, true);
+    });
+  }
+
+  async function sbLoadTrash(limit){
+    try {
+      const res = await sbFetch(`ea_tracker_trash?tracker=eq.${TRACKER_ID}&order=created_at.desc&limit=${limit || 20}`);
+      return await res.json();
+    } catch(err){
+      setStatus('⚠ 读取"Recent Deletions"失败：' + err.message, true);
+      return [];
+    }
+  }
+
+  function sbDeleteTrashEntry(trashId){
+    return sbFetch(`ea_tracker_trash?id=eq.${trashId}`, { method: 'DELETE' })
+      .catch(err => { setStatus('⚠ 清理"Recent Deletions"记录失败：' + err.message, true); });
+  }
+
+  let trashCache = [];
+  function renderTrashList(){
+    const area = document.getElementById('trashArea');
+    if (!area) return;
+    if (!trashCache.length){
+      area.innerHTML = '<div class="empty-state">No recent Reset / Delete actions — nothing to restore.</div>';
+      return;
+    }
+    const rowsHtml = trashCache.map(t => {
+      const liveName = demos[t.account_id] && demos[t.account_id].name;
+      const snapName = t.account_snapshot && t.account_snapshot.name;
+      const acctName = liveName || snapName || '—';
+      const when = new Date(t.created_at).toLocaleString();
+      const actionLabel = t.action === 'delete' ? 'Delete account' : 'Reset to zero';
+      const n = (t.daily_snapshot || []).length;
+      return `<tr>
+        <td style="text-align:left;white-space:nowrap">${esc(when)}</td>
+        <td style="text-align:left;white-space:nowrap">${esc(actionLabel)}</td>
+        <td style="text-align:left">${esc(t.account_id)} <span style="color:var(--fg-faint)">${esc(acctName)}</span></td>
+        <td>${n} day(s)</td>
+        <td style="text-align:left;white-space:nowrap"><button class="primary" data-trash-id="${t.id}" data-act="restore">Restore</button> <button class="edit-btn" data-trash-id="${t.id}" data-act="dismiss">Dismiss</button></td>
+      </tr>`;
+    }).join('');
+    area.innerHTML = `<div class="table-scroll"><table><thead><tr>
+        <th style="text-align:left">When</th><th style="text-align:left">Action</th><th style="text-align:left">Account</th><th>Entries</th><th style="text-align:left"> </th>
+      </tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+  }
+
+  async function loadTrashPanel(){
+    trashCache = await sbLoadTrash(20);
+    renderTrashList();
+  }
+
+  async function restoreTrash(trashId){
+    const entry = trashCache.find(t => t.id === trashId);
+    if (!entry) return;
+    const overwriteWarn = (entry.action === 'delete' && demos[entry.account_id])
+      ? `\n\nAccount ${entry.account_id} already exists again — restoring will overwrite its current name/note/start date with the old deleted values (its P&L log is untouched beyond what's in this backup).`
+      : '';
+    const ok = confirm(
+      `Restore this backup?\n\n` +
+      `Account ${entry.account_id}${entry.account_snapshot ? ' (' + (entry.account_snapshot.name||'—') + ')' : ''} — ` +
+      `${entry.action === 'delete' ? 'account + ' : ''}${(entry.daily_snapshot||[]).length} day(s) of P&L/lot data will be written back.` +
+      overwriteWarn
+    );
+    if (!ok) return;
+    if (entry.action === 'delete' && entry.account_snapshot){
+      demos[entry.account_snapshot.id] = entry.account_snapshot;
+      saveLocal(LS_DEMOS, demos);
+      sbUpsertAccount(entry.account_snapshot);
+    }
+    for (const row of (entry.daily_snapshot || [])){
+      const rec = daily[row.date] || { date: row.date };
+      if (row.pnl !== null && row.pnl !== undefined) rec[entry.account_id] = row.pnl; else delete rec[entry.account_id];
+      if (row.lot !== null && row.lot !== undefined) rec[entry.account_id + '_lot'] = row.lot; else delete rec[entry.account_id + '_lot'];
+      daily[row.date] = rec;
+      sbUpsertDaily(row.date, entry.account_id, row.pnl, row.lot);
+    }
+    saveLocal(LS_DAILY, daily);
+    sbDeleteTrashEntry(entry.id);
+    renderStats(); renderRoster(); renderMatrix();
+    loadTrashPanel();
+  }
+
+  function dismissTrash(trashId){
+    const ok = confirm('Remove this backup entry? This only deletes the backup itself — it does not touch any live account or P&L data.');
+    if (!ok) return;
+    sbDeleteTrashEntry(trashId);
+    loadTrashPanel();
+  }
+
+  document.getElementById('trashArea') && document.getElementById('trashArea').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-trash-id]');
+    if (!btn) return;
+    const trashId = Number(btn.dataset.trashId);
+    if (btn.dataset.act === 'restore') restoreTrash(trashId);
+    else if (btn.dataset.act === 'dismiss') dismissTrash(trashId);
+  });
 
   const SEED_ACCOUNTS = [
     { id:'2862', name:'Dplan 10:30am-6:pm', start_date:'2026-10-07', note:'GodVM -S10/M1', order:1, track_lot:true },
@@ -1320,11 +1456,13 @@
     const total = rows[rows.length-1].cum;
     const ok = confirm(
       `Reset account ${id} (${d.name||'—'}) to zero?\n\n` +
-      `This permanently deletes all ${rows.length} logged daily P&L${d.track_lot?' + lot':''} entries for this account ` +
-      `(currently ${fmtMoney(total)} cumulative). Other accounts are not touched. This cannot be undone.\n\n` +
+      `This clears all ${rows.length} logged daily P&L${d.track_lot?' + lot':''} entries for this account ` +
+      `(currently ${fmtMoney(total)} cumulative). Other accounts are not touched.\n\n` +
+      `A backup is saved under "Recent Deletions" (bottom of page) in case this was a mistake.\n\n` +
       `Use this when you've reconfigured the EA on this account and want the new test to start from a clean slate.`
     );
     if (!ok) return false;
+    sbSaveTrash('reset', id, null, snapshotDailyForAccount(id));
     for (const dt of Object.keys(daily)){
       const rec = daily[dt];
       if (!Object.prototype.hasOwnProperty.call(rec, id) && !Object.prototype.hasOwnProperty.call(rec, id + '_lot')) continue;
@@ -1336,6 +1474,7 @@
     saveLocal(LS_DAILY, daily);
     sbDeleteDailyForAccount(id);
     renderStats(); renderRoster(); renderMatrix();
+    loadTrashPanel();
     return true;
   }
 
@@ -1349,10 +1488,12 @@
     const rows = dailyRowsForAccount(id);
     const ok = confirm(
       `Permanently delete account ${id} (${d.name||'—'})?\n\n` +
-      `This removes it from the roster AND deletes all ${rows.length} logged daily P&L${d.track_lot?' + lot':''} entries for it, ` +
-      `on this device and in the cloud. This cannot be undone.`
+      `This removes it from the roster and clears all ${rows.length} logged daily P&L${d.track_lot?' + lot':''} entries for it, ` +
+      `on this device and in the cloud.\n\n` +
+      `A backup is saved under "Recent Deletions" (bottom of page) in case this was a mistake.`
     );
     if (!ok) return false;
+    sbSaveTrash('delete', id, { ...d }, snapshotDailyForAccount(id));
     delete demos[id];
     for (const dt of Object.keys(daily)){
       const rec = daily[dt];
@@ -1367,6 +1508,7 @@
     sbDeleteAccount(id);
     sbDeleteDailyForAccount(id);
     renderStats(); renderRoster(); renderMatrix();
+    loadTrashPanel();
     return true;
   }
   document.getElementById('detailOverlay').addEventListener('click', (e)=>{
@@ -1390,6 +1532,7 @@
   initState().then(()=>{
     renderMonthSwitch();
     renderStats(); renderRoster(); renderMatrix();
+    loadTrashPanel();
   });
 })();
 </script>
